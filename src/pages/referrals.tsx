@@ -1,5 +1,6 @@
+'use client';
+
 import React, { useEffect, useState } from 'react';
-import router from 'next/router';
 import {
     AppBar,
     Toolbar,
@@ -20,14 +21,17 @@ import {
     TextField,
     Snackbar,
     IconButton,
-    Box,
+    CircularProgress,
+    Box
 } from '@mui/material';
 import { Add, Close, Logout } from '@mui/icons-material';
 import { getAuthToken, removeAuthToken } from '@/utils/auth';
+import router from 'next/router';
 
 interface Referral {
     email: string;
     status: 'pending' | 'accepted';
+    code: string;
 }
 
 const ReferralsPage: React.FC = () => {
@@ -35,13 +39,21 @@ const ReferralsPage: React.FC = () => {
     const [open, setOpen] = useState(false);
     const [newReferralEmail, setNewReferralEmail] = useState('');
     const [snackbarOpen, setSnackbarOpen] = useState(false);
+    const [snackbarMessage, setSnackbarMessage] = useState('');
+    const [loading, setLoading] = useState(true);
+    const [sending, setSending] = useState(false);
+    const [isClient, setIsClient] = useState(false);
 
+    // Ensure client-side rendering to avoid hydration error
     useEffect(() => {
+        setIsClient(true);
         fetchReferrals();
     }, []);
 
+    // Fetch referrals from the server
     const fetchReferrals = async () => {
         try {
+            setLoading(true);
             const token = getAuthToken();
             const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/referrals`, {
                 method: 'GET',
@@ -58,28 +70,33 @@ const ReferralsPage: React.FC = () => {
             const data = await response.json();
             setReferrals(data?.status?.data ?? []);
         } catch (error) {
-            // console.error('Error fetching referrals:', error);
+            setSnackbarMessage('Failed to fetch referrals');
+            setSnackbarOpen(true);
+        } finally {
+            setLoading(false);
         }
     };
 
-    const handleClickOpen = () => {
-        setOpen(true);
-    };
+    // Handle dialog open/close
+    const handleClickOpen = () => setOpen(true);
+    const handleClose = () => setOpen(false);
 
-    const handleClose = () => {
-        setOpen(false);
-    };
+    // Handle snackbar close
+    const handleSnackbarClose = () => setSnackbarOpen(false);
 
-    const handleSnackbarClose = () => {
-        setSnackbarOpen(false);
-    };
-
+    // Handle sending a referral with loader and snackbar for error
     const handleRefer = async () => {
+        if (sending) return;
+
         try {
             if (!newReferralEmail.trim()) {
-                alert("Please enter a valid email address.");
+                setSnackbarMessage('Please enter a valid email address.');
+                setSnackbarOpen(true);
                 return;
             }
+
+            setSending(true);
+
             const token = getAuthToken();
             const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/referrals`, {
                 method: 'POST',
@@ -91,19 +108,29 @@ const ReferralsPage: React.FC = () => {
             });
 
             if (!response.ok) {
-                throw new Error('Failed to send referral');
+                const errorData = await response.json();
+                setSnackbarMessage(errorData?.message || 'User is already referred by someone');
+                setSnackbarOpen(true);
+                return;
             }
 
             const data = await response.json();
             console.log(data);
-            fetchReferrals();
+
+            fetchReferrals(); // Refresh the list
             setOpen(false);
+            setSnackbarMessage('Referral sent successfully!');
             setSnackbarOpen(true);
+            setNewReferralEmail(''); // Clear input
         } catch (error) {
-            console.log('Error sending referral:', error);
+            setSnackbarMessage('User is already referred by someone');
+            setSnackbarOpen(true);
+        } finally {
+            setSending(false);
         }
     };
 
+    // Handle logout with snackbar on failure
     const handleLogOut = async () => {
         try {
             const token = getAuthToken();
@@ -114,55 +141,75 @@ const ReferralsPage: React.FC = () => {
                     'Content-Type': 'application/json',
                 },
             });
-            const data = await response.json();
-            console.log(data);
+
+            if (!response.ok) {
+                setSnackbarMessage('Failed to log out');
+                setSnackbarOpen(true);
+                return;
+            }
+
             removeAuthToken();
             router.push('/login');
         } catch (error) {
-            console.log('Error sending referral:', error);
+            setSnackbarMessage('Failed to log out');
+            setSnackbarOpen(true);
         }
     };
 
+    // Prevent SSR mismatch using isClient check
+    if (!isClient) {
+        return null;
+    }
+
     return (
         <Box sx={{ backgroundColor: '#121212', minHeight: '100vh', color: '#fff', paddingTop: '20px' }}>
+            {/* Header Section */}
             <AppBar position="static" sx={{ backgroundColor: '#1976d2' }}>
                 <Toolbar sx={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <Typography variant="h6">
-                        Referral Management
-                    </Typography>
+                    <Typography variant="h6">Referral Management</Typography>
                     <IconButton onClick={handleLogOut} sx={{ color: 'white' }}>
                         <Logout />
                     </IconButton>
                 </Toolbar>
             </AppBar>
 
-
+            {/* Main Section */}
             <Container maxWidth="md">
                 <Typography variant="h4" gutterBottom sx={{ textAlign: 'center', margin: '20px 0' }}>
                     Your Referrals
                 </Typography>
 
-                <TableContainer component={Paper} sx={{ backgroundColor: '#1e1e1e', color: '#fff', overflowX: 'auto' }}>
-                    <Table>
-                        <TableHead>
-                            <TableRow sx={{ backgroundColor: '#1976d2' }}>
-                                <TableCell sx={{ color: '#fff', fontWeight: 'bold' }}>Email</TableCell>
-                                <TableCell sx={{ color: '#fff', fontWeight: 'bold' }}>Status</TableCell>
-                            </TableRow>
-                        </TableHead>
-                        <TableBody>
-                            {referrals.map((referral, index) => (
-                                <TableRow key={index} sx={{ '&:nth-of-type(odd)': { backgroundColor: '#282828' } }}>
-                                    <TableCell sx={{ color: '#fff' }}>{referral.email}</TableCell>
-                                    <TableCell sx={{ color: referral.status === 'accepted' ? 'lightgreen' : 'orange' }}>
-                                        {referral.status}
-                                    </TableCell>
+                {/* Loader while fetching data */}
+                {loading ? (
+                    <Box sx={{ display: 'flex', justifyContent: 'center', margin: '20px 0' }}>
+                        <CircularProgress color="primary" />
+                    </Box>
+                ) : (
+                    <TableContainer component={Paper} sx={{ backgroundColor: '#1e1e1e', color: '#fff' }}>
+                        <Table>
+                            <TableHead>
+                                <TableRow sx={{ backgroundColor: '#1976d2' }}>
+                                    <TableCell sx={{ color: '#fff', fontWeight: 'bold' }}>Email</TableCell>
+                                    <TableCell sx={{ color: '#fff', fontWeight: 'bold' }}>Referral code</TableCell>
+                                    <TableCell sx={{ color: '#fff', fontWeight: 'bold' }}>Status</TableCell>
                                 </TableRow>
-                            ))}
-                        </TableBody>
-                    </Table>
-                </TableContainer>
+                            </TableHead>
+                            <TableBody>
+                                {referrals.map((referral, index) => (
+                                    <TableRow key={index} sx={{ '&:nth-of-type(odd)': { backgroundColor: '#282828' } }}>
+                                        <TableCell sx={{ color: '#fff' }}>{referral.email}</TableCell>
+                                        <TableCell sx={{ color: '#fff' }}>{referral.code}</TableCell>
+                                        <TableCell sx={{ color: referral.status === 'accepted' ? 'lightgreen' : 'orange' }}>
+                                            {referral.status}
+                                        </TableCell>
+                                    </TableRow>
+                                ))}
+                            </TableBody>
+                        </Table>
+                    </TableContainer>
+                )}
 
+                {/* Add Referral Button */}
                 <Button
                     variant="contained"
                     startIcon={<Add />}
@@ -172,6 +219,7 @@ const ReferralsPage: React.FC = () => {
                     Refer a New User
                 </Button>
 
+                {/* Referral Dialog */}
                 <Dialog open={open} onClose={handleClose}>
                     <DialogTitle>Refer a New User</DialogTitle>
                     <DialogContent>
@@ -186,20 +234,21 @@ const ReferralsPage: React.FC = () => {
                         />
                     </DialogContent>
                     <DialogActions>
-                        <Button onClick={handleClose} color="secondary">
+                        <Button onClick={handleClose} color="secondary" disabled={sending}>
                             Cancel
                         </Button>
-                        <Button onClick={handleRefer} color="primary">
-                            Send Referral
+                        <Button onClick={handleRefer} color="primary" disabled={sending}>
+                            {sending ? <CircularProgress size={24} color="inherit" /> : 'Send Referral'}
                         </Button>
                     </DialogActions>
                 </Dialog>
 
+                {/* Snackbar for notifications */}
                 <Snackbar
                     open={snackbarOpen}
                     autoHideDuration={3000}
                     onClose={handleSnackbarClose}
-                    message="Referral sent successfully!"
+                    message={snackbarMessage}
                     action={
                         <IconButton size="small" color="inherit" onClick={handleSnackbarClose}>
                             <Close fontSize="small" />
